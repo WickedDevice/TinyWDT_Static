@@ -5,12 +5,11 @@ const int configure_tx_pin = 1;                        // PB1 = DIG1 (not connec
 const int led_pin          = 2;                        // PB2 = DIG2
 const int pet_input_pin    = 3;                        // PB3 = DIG3
 const int debug_pin        = 4;                        // PB4 = DIG4
-boolean debug              = false;
 uint8_t debug_state        = 0;
 
 #define LED_SHORT_BLINK_DURATION_MS      (50)
 #define PET_WATCHDOG_RELEASE_DURATION_MS (5)
-#define SETUP_TIMEOUT_DURATION_MS        (10000)
+#define SETUP_TIMEOUT_DURATION_MS        (10000UL)
 
 void wdt_init(void) __attribute__((naked)) __attribute__((section(".init3")));
 void wdt_init(void){
@@ -33,7 +32,12 @@ uint32_t maximum_wait_period_after_petting_ms = 65000UL;
 volatile uint8_t led_on_duration_ms = 0;
 volatile uint8_t check_for_pet_timer_ms = 0;
 volatile uint8_t once_per_millisecond_timer_ms = 0;
-volatile uint16_t setup_timeout_timer_ms = 0;
+volatile uint16_t setup_timeout_timer_ms = SETUP_TIMEOUT_DURATION_MS;
+
+volatile uint8_t internal_watchdog_timeout_timer_ms = 0;
+volatile uint8_t debug_transition_timer_ms = 0;
+uint8_t debug_transition_reload_ms = 100; // transition every 100ms
+
 boolean first_pet = true; // no minimum window constraint on the first pet
 
 // this ISR is set up to fire once a millisecond
@@ -58,29 +62,39 @@ ISR(TIM1_OVF_vect){
   if(setup_timeout_timer_ms > 0){
     setup_timeout_timer_ms--;
   }
+
+  if(internal_watchdog_timeout_timer_ms > 0){
+    internal_watchdog_timeout_timer_ms--;
+  }
 }
 
 void perform_reset_sequence(void);
 void blinkLedFast(uint8_t n);
 
 void setup(){
+  wdt_enable(WDTO_500MS);
+ 
   TCCR1 = 0x07; // divide by 1024
   TCNT1 = timer_preload_value;
   TIMSK = _BV(TOIE1);    
-    
+
   pinMode(host_reset_pin, INPUT);
   pinMode(pet_input_pin, INPUT_PULLUP);
   pinMode(led_pin, OUTPUT);
+  pinMode(debug_pin, OUTPUT);
+  digitalWrite(debug_pin, debug_state);
   digitalWrite(led_pin, LOW);
 
   blinkLedFast(2);
-  
-  setup_timeout_timer_ms = SETUP_TIMEOUT_DURATION_MS;
+ 
   for(;;){
     if (setup_timeout_timer_ms == 0){
       break;
     }
-  
+
+    handleDebug();    
+    handleOncePerMillisecond();
+    
     // handle what happens the host is reset by something else
     if(digitalRead(host_reset_pin) == 0){
       while(digitalRead(host_reset_pin) == 0){
@@ -88,13 +102,13 @@ void setup(){
       }
       soft_reset();
     }       
-  } 
+  }
  
   blinkLedFast(1);    
+  
 }
 
-void loop(){    
-  
+void loop(){      
   // handle what happens when the host is reset by something else
   if(digitalRead(host_reset_pin) == 0){
     while(digitalRead(host_reset_pin) == 0){
@@ -102,16 +116,15 @@ void loop(){
     }
     soft_reset();
   }
+
+  handleDebug();
   
   // the once per millisecond_timer_ms task runs to
   // increment a counter every millisecond, regardless
   // of other activity, and the counter can be cleared by 
   // the check_for_pet_timer_ms task
-  if(once_per_millisecond_timer_ms == 0) {
-    once_per_millisecond_timer_ms = 1;    
-    ms_without_being_pet++; // increase the counter        
-  }
-  
+  handleOncePerMillisecond();
+
   // the check_for_pet_timer_ms task runs to 
   // 1 - determine if the watchdog is currently being pet, and restart the ms_without_being_pet if necessary
   // 2 - issue a reset if an early pet is detected
@@ -126,7 +139,7 @@ void loop(){
         if(!first_pet){
           // the pet signal arrived too early (on the second, or later, pet)    
           perform_reset_sequence(); 
-        }        
+        }
       }
               
       // pet signal must be within the allowable window            
@@ -179,5 +192,31 @@ void blinkLedFast(uint8_t n){
     digitalWrite(led_pin, LOW);  // led off
     delay(150);                  // wait off
   } 
+}
+
+void handleDebug(void){
+  if(debug_transition_timer_ms >= debug_transition_reload_ms){        
+    debug_transition_timer_ms = 0;    
+    
+    debug_state = 1 - debug_state;
+    if(debug_state){
+      PORTB |= _BV(PB4);
+    }
+    else{
+      PORTB &= ~_BV(PB4);
+    }
+
+    wdt_reset();
+  }
+}
+
+void handleOncePerMillisecond(void){
+  if(once_per_millisecond_timer_ms == 0) {
+    once_per_millisecond_timer_ms = 1;    
+    
+    // increase the 16-bit counters
+    debug_transition_timer_ms++; 
+    ms_without_being_pet++; 
+  }  
 }
 
