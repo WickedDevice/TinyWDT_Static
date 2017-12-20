@@ -36,7 +36,7 @@ volatile uint16_t setup_timeout_timer_ms = SETUP_TIMEOUT_DURATION_MS;
 
 volatile uint8_t internal_watchdog_timeout_timer_ms = 0;
 volatile uint8_t debug_transition_timer_ms = 0;
-uint8_t debug_transition_reload_ms = 100; // transition every 100ms
+uint8_t debug_transition_reload_ms = 100; // transition every 100ms during startup 200ms during runtime
 
 boolean first_pet = true; // no minimum window constraint on the first pet
 
@@ -72,8 +72,9 @@ void perform_reset_sequence(void);
 void blinkLedFast(uint8_t n);
 
 void setup(){
+  PORTB |= _BV(PB4);
   wdt_enable(WDTO_500MS);
- 
+  
   TCCR1 = 0x07; // divide by 1024
   TCNT1 = timer_preload_value;
   TIMSK = _BV(TOIE1);    
@@ -105,7 +106,7 @@ void setup(){
   }
  
   blinkLedFast(1);    
-  
+  debug_transition_reload_ms = 200;
 }
 
 void loop(){      
