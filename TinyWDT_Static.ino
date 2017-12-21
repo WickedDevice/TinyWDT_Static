@@ -15,6 +15,8 @@ void wdt_init(void) __attribute__((naked)) __attribute__((section(".init3")));
 void wdt_init(void){
     MCUSR = 0;
     wdt_disable();
+    wdt_reset();
+    wdt_enable(WDTO_1S);
     return;
 }
 #define soft_reset()        \
@@ -43,7 +45,8 @@ boolean first_pet = true; // no minimum window constraint on the first pet
 // this ISR is set up to fire once a millisecond
 // and only impacts 1-byte volatile variables
 // in order to avoid the requirement of locking access
-const uint8_t timer_preload_value = 131; // 256 - 131 = 125 ticks @ 8MHz/64 = 1ms
+const uint8_t timer_preload_value = 131; // 256 - 131 = 125 ticks @ 8MHz/64 = 1ms (prescale 64)
+                                         // 256 - 131 = 125 ticks @ 1MHz/8 = 1ms  (prescale 8)
 ISR(TIM1_OVF_vect){
   TCNT1 = timer_preload_value;
   
@@ -72,10 +75,13 @@ void perform_reset_sequence(void);
 void blinkLedFast(uint8_t n);
 
 void setup(){
+  DDRB |= _BV(PB4);
   PORTB |= _BV(PB4);
+  
   wdt_enable(WDTO_500MS);
   
-  TCCR1 = 0x07; // divide by 1024
+  //TCCR1 = 0x07; // divide by 64 (for 8MHz)
+  TCCR1 = 0x04; // divide by 8  (for 1MHz)
   TCNT1 = timer_preload_value;
   TIMSK = _BV(TOIE1);    
 
